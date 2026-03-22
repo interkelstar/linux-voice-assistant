@@ -1,7 +1,6 @@
 #!/bin/bash
 set -e
 
-
 # Add cookie file for pulseaudio to prevent errors
 PULSE_COOKIE=${PULSE_COOKIE:-"/run/user/1000/pulse/cookie"}
 if [[ "$PULSE_COOKIE" != "DISABLED" ]]; then
@@ -185,6 +184,14 @@ fi
 
 if [ -n "${UNMUTE_SOUND}" ]; then
   EXTRA_ARGS+=( "--unmute-sound" "$UNMUTE_SOUND" )
+fi
+
+if [ -n "${FP_BUFFER_DIR}" ]; then
+  EXTRA_ARGS+=( "--fp-buffer-dir" "$FP_BUFFER_DIR" )
+fi
+
+if [ -n "${FP_BUFFER_SECONDS}" ]; then
+  EXTRA_ARGS+=( "--fp-buffer-seconds" "$FP_BUFFER_SECONDS" )
 fi
 
 if [ -n "${TIMER_MAX_RING_SECONDS}" ]; then

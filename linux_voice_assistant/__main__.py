@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 import argparse
 import asyncio
+import collections
 import errno
 import json
 import logging
 import sys
 import threading
 import time
+import wave
+from datetime import datetime
 from pathlib import Path
 from queue import Queue
-from typing import List, Optional, Union
+from typing import Deque, List, Optional, Union
 
 import numpy as np
 import soundcard as sc
@@ -230,6 +233,17 @@ async def main() -> None:
         help="Start listening immediately after wake word detection, without waiting for the wake sound to finish",
     )
     parser.add_argument(
+        "--fp-buffer-dir",
+        default=None,
+        help="Directory to save pre-trigger audio buffers for false positive collection (disabled by default)",
+    )
+    parser.add_argument(
+        "--fp-buffer-seconds",
+        type=float,
+        default=5.0,
+        help="Seconds of audio to buffer before a wake word trigger (default: 5.0)",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Add this to enable debug logging",
@@ -313,6 +327,13 @@ async def main() -> None:
     # Resolve download dir
     args.download_dir = Path(args.download_dir)
     args.download_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve false positive buffer dir
+    fp_buffer_dir: Optional[Path] = None
+    if args.fp_buffer_dir:
+        fp_buffer_dir = Path(args.fp_buffer_dir)
+        fp_buffer_dir.mkdir(parents=True, exist_ok=True)
+        _LOGGER.info("False positive buffer enabled, saving to %s (%.1fs)", fp_buffer_dir, args.fp_buffer_seconds)
 
     # Resolve microphone
     if args.audio_input_device is not None:
@@ -525,7 +546,7 @@ async def main() -> None:
     # ------------------------------------------------------------------
     process_audio_thread = threading.Thread(
         target=process_audio,
-        args=(state, mic, args.audio_input_block_size),
+        args=(state, mic, args.audio_input_block_size, fp_buffer_dir, args.fp_buffer_seconds),
         daemon=True,
     )
     process_audio_thread.start()
@@ -578,7 +599,23 @@ async def main() -> None:
 # -----------------------------------------------------------------------------
 
 
-def process_audio(state: ServerState, mic, block_size: int):
+def _write_fp_buffer(buffer: Deque[bytes], output_dir: Path) -> None:
+    """Write a pre-trigger audio buffer to a timestamped WAV file."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filepath = output_dir / f"fp_buffer_{timestamp}.wav"
+    try:
+        with wave.open(str(filepath), "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)  # int16 = 2 bytes per sample
+            wav_file.setframerate(16000)
+            for chunk in buffer:
+                wav_file.writeframes(chunk)
+        _LOGGER.debug("Saved FP buffer: %s (%d chunks)", filepath.name, len(buffer))
+    except Exception:
+        _LOGGER.exception("Failed to write FP buffer to %s", filepath)
+
+
+def process_audio(state: ServerState, mic, block_size: int, fp_buffer_dir: Optional[Path] = None, fp_buffer_seconds: float = 5.0):
     """Process audio chunks from the microphone."""
     n_channels = state.audio_input_channels
 
@@ -592,6 +629,13 @@ def process_audio(state: ServerState, mic, block_size: int):
 
     last_active: Optional[float] = None
     webrtc: Optional[WebRTCProcessor] = None
+
+    # Rolling ring buffer for false positive collection.
+    # Holds the last `fp_buffer_seconds` of raw PCM (16kHz mono int16).
+    fp_buffer: Optional[Deque[bytes]] = None
+    if fp_buffer_dir is not None:
+        max_chunks = int(fp_buffer_seconds * 16000 / block_size) + 1
+        fp_buffer = collections.deque(maxlen=max_chunks)
 
     try:
         _LOGGER.debug("Opening audio input device: %s", mic.name)
@@ -710,6 +754,9 @@ def process_audio(state: ServerState, mic, block_size: int):
                     if has_oww and (oww_features is None):
                         oww_features = OpenWakeWordFeatures.from_builtin()
 
+                if fp_buffer is not None:
+                    fp_buffer.append(audio_chunk)
+
                 try:
                     # Both channels travel in one message: data=ch0 (enhanced), data2=ch1 (raw reference)
                     audio_chunk_2 = channel_chunks[1] if n_channels >= 2 else None
@@ -762,6 +809,8 @@ def process_audio(state: ServerState, mic, block_size: int):
                             if (last_active is None) or ((now - last_active) > state.refractory_seconds):
                                 state.satellite.wakeup(wake_word)
                                 last_active = now
+                                if fp_buffer is not None and fp_buffer_dir is not None:
+                                    _write_fp_buffer(fp_buffer, fp_buffer_dir)
 
                     # Always process to keep state correct
                     stopped = False

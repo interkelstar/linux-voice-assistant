@@ -1,6 +1,67 @@
 #!/bin/bash
 set -e
 
+
+# Add cookie file for pulseaudio to prevent errors
+PULSE_COOKIE=${PULSE_COOKIE:-"/run/user/1000/pulse/cookie"}
+if [[ "$PULSE_COOKIE" != "DISABLED" ]]; then
+  if [ ! -f "$PULSE_COOKIE" ]; then
+    echo "Creating PulseAudio cookie file at $PULSE_COOKIE"
+    touch "$PULSE_COOKIE"
+    chmod 600 "$PULSE_COOKIE"
+  fi
+fi
+
+
+### Wait for PulseAudio
+# Wait for PulseAudio to be available before starting the application
+CP_MAX_RETRIES=30
+CP_RETRY_DELAY=1
+### while maybe besser?
+echo "Checking PulseAudio service status..."
+for i in $(seq 1 $CP_MAX_RETRIES); do
+  # Check if PulseAudio is running
+  if pactl info >/dev/null 2>&1; then
+    echo "✅ PulseAudio is running"
+    break
+  fi
+
+  if [ $i -eq $CP_MAX_RETRIES ]; then
+      echo "❌ PulseAudio did not start after $CP_MAX_RETRIES seconds"
+      exit 2
+  fi
+
+  echo "⏳ PulseAudio not running yet, retrying in $CP_RETRY_DELAY s..."
+  sleep $CP_RETRY_DELAY
+done
+
+
+### Acoustic Echo Cancellation
+# Convenience wrapper for the setup described in docs/enabling_aec.md.
+# Loads the PulseAudio AEC module and sets AUDIO_INPUT_DEVICE automatically.
+# See docs/enabling_aec.md for manual setup and PipeWire instructions.
+if [ "${ENABLE_ECHO_CANCEL}" = "1" ]; then
+  if pactl list sources short 2>/dev/null | awk '{print $2}' | grep -qx aec_mic; then
+    echo "✅ AEC source aec_mic already present"
+  else
+    # A previously-loaded echo-cancel module without source_name=aec_mic
+    # creates a source like alsa_input.<device>.echo-cancel instead, so
+    # unload it before loading ours with the expected name.
+    stale=$(pactl list modules short 2>/dev/null | awk '/module-echo-cancel/ {print $1}')
+    if [ -n "$stale" ]; then
+      echo "↻ Unloading stale module-echo-cancel (id $stale, no aec_mic source)"
+      pactl unload-module "$stale" || true
+    fi
+    if pactl load-module module-echo-cancel source_name=aec_mic aec_method=webrtc; then
+      echo "✅ Echo cancellation enabled (source=aec_mic)"
+    else
+      echo "⚠️  Failed to load echo cancellation module (continuing without it)"
+    fi
+  fi
+  AUDIO_INPUT_DEVICE="${AUDIO_INPUT_DEVICE:-aec_mic}"
+fi
+
+
 ### Handlers
 # Handle parameters
 EXTRA_ARGS=()
@@ -130,58 +191,6 @@ fi
 
 if [ "$ENABLE_OUTPUT_ONLY" = "1" ]; then
   EXTRA_ARGS+=( "--output-only" )
-fi
-
-
-# Add cookie file for pulseaudio to prevent errors
-PULSE_COOKIE=${PULSE_COOKIE:-"/run/user/1000/pulse/cookie"}
-if [[ "$PULSE_COOKIE" != "DISABLED" ]]; then
-  if [ ! -f "$PULSE_COOKIE" ]; then
-    echo "Creating PulseAudio cookie file at $PULSE_COOKIE"
-    touch "$PULSE_COOKIE"
-    chmod 600 "$PULSE_COOKIE"
-  fi
-fi
-
-
-### Wait for PulseAudio
-# Wait for PulseAudio to be available before starting the application
-CP_MAX_RETRIES=30
-CP_RETRY_DELAY=1
-### while maybe besser?
-echo "Checking PulseAudio service status..."
-for i in $(seq 1 $CP_MAX_RETRIES); do
-  # Check if PulseAudio is running
-  if pactl info >/dev/null 2>&1; then
-    echo "✅ PulseAudio is running"
-    break
-  fi
-
-  if [ $i -eq $CP_MAX_RETRIES ]; then
-      echo "❌ PulseAudio did not start after $CP_MAX_RETRIES seconds"
-      exit 2
-  fi
-
-  echo "⏳ PulseAudio not running yet, retrying in $CP_RETRY_DELAY s..."
-  sleep $CP_RETRY_DELAY
-done
-
-
-### Acoustic Echo Cancellation
-# Convenience wrapper for the setup described in docs/enabling_aec.md.
-# Loads the PulseAudio AEC module and sets AUDIO_INPUT_DEVICE automatically.
-# See docs/enabling_aec.md for manual setup and PipeWire instructions.
-if [ "${ENABLE_ECHO_CANCEL}" = "1" ]; then
-  if pactl list modules short 2>/dev/null | grep -q module-echo-cancel; then
-    echo "✅ Echo cancellation module already loaded"
-  else
-    if pactl load-module module-echo-cancel source_name=aec_mic aec_method=webrtc; then
-      echo "✅ Echo cancellation enabled"
-    else
-      echo "⚠️  Failed to load echo cancellation module (continuing without it)"
-    fi
-  fi
-  AUDIO_INPUT_DEVICE="${AUDIO_INPUT_DEVICE:-aec_mic}"
 fi
 
 

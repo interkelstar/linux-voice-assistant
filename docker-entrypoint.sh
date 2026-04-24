@@ -46,24 +46,31 @@ done
 # Loads the PulseAudio AEC module and sets AUDIO_INPUT_DEVICE automatically.
 # See docs/enabling_aec.md for manual setup and PipeWire instructions.
 if [ "${ENABLE_ECHO_CANCEL}" = "1" ]; then
-  if pactl list sources short 2>/dev/null | awk '{print $2}' | grep -qx aec_mic; then
-    echo "✅ AEC source aec_mic already present"
+  # AEC only cancels audio routed through its virtual sink. Naming both
+  # source and sink explicitly lets us point LVA at them directly via
+  # AUDIO_INPUT_DEVICE / AUDIO_OUTPUT_DEVICE, instead of relying on the
+  # host's default sink (which other services may change).
+  have_mic=n; have_sink=n
+  if pactl list sources short 2>/dev/null | awk '{print $2}' | grep -qx aec_mic; then have_mic=y; fi
+  if pactl list sinks   short 2>/dev/null | awk '{print $2}' | grep -qx aec_speaker; then have_sink=y; fi
+  if [ "$have_mic" = "y" ] && [ "$have_sink" = "y" ]; then
+    echo "✅ AEC source aec_mic and sink aec_speaker already present"
   else
-    # A previously-loaded echo-cancel module without source_name=aec_mic
-    # creates a source like alsa_input.<device>.echo-cancel instead, so
-    # unload it before loading ours with the expected name.
+    # Stale module-echo-cancel with different source/sink names would
+    # leave aec_mic / aec_speaker missing; unload before reloading.
     stale=$(pactl list modules short 2>/dev/null | awk '/module-echo-cancel/ {print $1}')
     if [ -n "$stale" ]; then
-      echo "↻ Unloading stale module-echo-cancel (id $stale, no aec_mic source)"
+      echo "↻ Unloading stale module-echo-cancel (id $stale)"
       pactl unload-module "$stale" || true
     fi
-    if pactl load-module module-echo-cancel source_name=aec_mic aec_method=webrtc; then
-      echo "✅ Echo cancellation enabled (source=aec_mic)"
+    if pactl load-module module-echo-cancel source_name=aec_mic sink_name=aec_speaker aec_method=webrtc; then
+      echo "✅ Echo cancellation enabled (source=aec_mic, sink=aec_speaker)"
     else
       echo "⚠️  Failed to load echo cancellation module (continuing without it)"
     fi
   fi
   AUDIO_INPUT_DEVICE="${AUDIO_INPUT_DEVICE:-aec_mic}"
+  AUDIO_OUTPUT_DEVICE="${AUDIO_OUTPUT_DEVICE:-aec_speaker}"
 fi
 
 

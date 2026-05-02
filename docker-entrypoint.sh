@@ -60,12 +60,23 @@ if [ "${ENABLE_ECHO_CANCEL}" = "1" ]; then
     fi
     if pactl load-module module-echo-cancel source_name=aec_mic sink_name=aec_speaker aec_method=webrtc; then
       echo "✅ Echo cancellation enabled (source=aec_mic, sink=aec_speaker)"
+      have_mic=y; have_sink=y
     else
       echo "⚠️  Failed to load echo cancellation module (continuing without it)"
     fi
   fi
-  AUDIO_INPUT_DEVICE="${AUDIO_INPUT_DEVICE:-aec_mic}"
-  AUDIO_OUTPUT_DEVICE="${AUDIO_OUTPUT_DEVICE:-aec_speaker}"
+  # Only pin the app to aec_mic / aec_speaker when the module is actually
+  # live; otherwise the app would crash on a missing source.
+  if [ "$have_mic" = "y" ] && [ "$have_sink" = "y" ]; then
+    # mpv's --audio-device selects an AO driver, so a bare PulseAudio sink
+    # name fails to open; the "pulse/" prefix routes through the PA AO to
+    # the named sink. The soundcard library on the input side takes the
+    # plain PA source name, so aec_mic stays as-is.
+    AUDIO_INPUT_DEVICE="${AUDIO_INPUT_DEVICE:-aec_mic}"
+    AUDIO_OUTPUT_DEVICE="${AUDIO_OUTPUT_DEVICE:-pulse/aec_speaker}"
+  else
+    echo "⚠️  AEC unavailable; falling back to host default audio devices"
+  fi
 fi
 
 

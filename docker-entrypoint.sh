@@ -164,6 +164,51 @@ if [ -n "${UNMUTE_SOUND}" ]; then
   EXTRA_ARGS+=( "--unmute-sound" "$UNMUTE_SOUND" )
 fi
 
+if [ -n "${FP_BUFFER_DIR}" ]; then
+  EXTRA_ARGS+=( "--fp-buffer-dir" "$FP_BUFFER_DIR" )
+fi
+
+if [ -n "${FP_BUFFER_SECONDS}" ]; then
+  EXTRA_ARGS+=( "--fp-buffer-seconds" "$FP_BUFFER_SECONDS" )
+fi
+
+
+# Add cookie file for pulseaudio to prevent errors
+PULSE_COOKIE=${PULSE_COOKIE:-"/run/user/1000/pulse/cookie"}
+if [[ "$PULSE_COOKIE" != "DISABLED" ]]; then
+  if [ ! -f "$PULSE_COOKIE" ]; then
+    echo "PulseAudio cookie file not found at $PULSE_COOKIE"
+    PULSE_COOKIE="/app/configuration/tmp_pulse_cookie"
+    echo "changed PULSE_COOKIE to $PULSE_COOKIE"
+    if [ ! -f "$PULSE_COOKIE" ]; then
+      echo "Creating PulseAudio cookie file at $PULSE_COOKIE"
+      touch "$PULSE_COOKIE"
+      chmod 600 "$PULSE_COOKIE"
+    fi
+  fi
+fi
+
+
+### Wait for PulseAudio
+# Wait for PulseAudio to be available before starting the application
+CP_MAX_RETRIES=30
+CP_RETRY_DELAY=1
+echo "Checking PulseAudio service status..."
+for i in $(seq 1 $CP_MAX_RETRIES); do
+  if pactl info >/dev/null 2>&1; then
+    echo "✅ PulseAudio is running"
+    break
+  fi
+
+  if [ $i -eq $CP_MAX_RETRIES ]; then
+      echo "❌ PulseAudio did not start after $CP_MAX_RETRIES seconds"
+      exit 2
+  fi
+
+  echo "⏳ PulseAudio not running yet, retrying in $CP_RETRY_DELAY s..."
+  sleep $CP_RETRY_DELAY
+done
+
 
 ### Start application
 if [ "$LIST_DEVICES" = "1" ]; then

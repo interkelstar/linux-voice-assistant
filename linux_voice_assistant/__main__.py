@@ -599,10 +599,10 @@ async def main() -> None:
 # -----------------------------------------------------------------------------
 
 
-def _write_fp_buffer(buffer: Deque[bytes], output_dir: Path) -> None:
+def _write_fp_buffer(buffer: Deque[bytes], output_dir: Path, prefix: str = "fp_buffer") -> None:
     """Write a pre-trigger audio buffer to a timestamped WAV file."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filepath = output_dir / f"fp_buffer_{timestamp}.wav"
+    filepath = output_dir / f"{prefix}_{timestamp}.wav"
     try:
         with wave.open(str(filepath), "wb") as wav_file:
             wav_file.setnchannels(1)
@@ -828,6 +828,12 @@ def process_audio(state: ServerState, mic, block_size: int, fp_buffer_dir: Optio
 
                     if stopped and (state.stop_word.id in state.active_wake_words) and not state.muted:
                         _LOGGER.debug("Stop word detected")
+                        # Only reached while the device itself is speaking, so a
+                        # false positive here audibly cuts playback off. Capture
+                        # what the model heard; without it the stop word can only
+                        # be tuned blind, unlike wake words which already save one.
+                        if fp_buffer is not None and fp_buffer_dir is not None:
+                            _write_fp_buffer(fp_buffer, fp_buffer_dir, prefix="stop_fp")
                         state.satellite.stop()
                 except Exception:  # pylint: disable=broad-except
                     _LOGGER.exception("Unexpected error handling audio")

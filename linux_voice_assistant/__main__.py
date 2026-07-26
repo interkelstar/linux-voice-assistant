@@ -415,6 +415,17 @@ async def main() -> None:
     stop_model = load_stop_model(wake_word_dirs, args.stop_model)
     assert stop_model is not None
 
+    # Restore the stop word sensitivity the user picked in Home Assistant. Wake
+    # word thresholds are restored from preferences when the models are built,
+    # but the stop word had no equivalent, so the entity was written to disk on
+    # every change and then silently reset to the model default on restart.
+    initial_stop_sensitivity = (
+        preferences.stop_word_sensitivity
+        if preferences.stop_word_sensitivity is not None
+        else stop_model.probability_cutoff
+    )
+    preferences.stop_word_sensitivity = initial_stop_sensitivity
+
     state = ServerState(
         name=device_name,
         friendly_name=friendly_name,
@@ -450,6 +461,7 @@ async def main() -> None:
         mic_volume=preferences.mic_volume,
         mic_auto_gain=preferences.mic_auto_gain,
         mic_noise_suppression=preferences.mic_noise_suppression,
+        stop_word_threshold=initial_stop_sensitivity,
         audio_input_channels=args.audio_input_channels,
         timer_max_ring_seconds=args.timer_max_ring_seconds,
         listen_during_wake_sound=args.listen_during_wake_sound,

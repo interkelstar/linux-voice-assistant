@@ -838,15 +838,26 @@ def process_audio(state: ServerState, mic, block_size: int, fp_buffer_dir: Optio
                             state.stop_word.debug_probabilities = True
                             stopped = True
 
-                    if stopped and (state.stop_word.id in state.active_wake_words) and not state.muted:
-                        _LOGGER.debug("Stop word detected")
-                        # Only reached while the device itself is speaking, so a
-                        # false positive here audibly cuts playback off. Capture
-                        # what the model heard; without it the stop word can only
-                        # be tuned blind, unlike wake words which already save one.
+                    if stopped and not state.muted:
+                        # The stop word is only armed while the device is itself
+                        # speaking, so an activation outside that window changes
+                        # nothing audible — but it is still the only evidence of
+                        # what the model reacts to, and the interesting cases
+                        # (a passing conversation, the TV) mostly land there.
+                        # Save both, tagged apart: "stop_fp" cut playback off,
+                        # "stop_heard" passed harmlessly. Each clip is ~160 KB,
+                        # so this is only affordable while the model is quiet —
+                        # a regressed model firing hundreds of times a day would
+                        # fill the buffer directory.
+                        armed = state.stop_word.id in state.active_wake_words
                         if fp_buffer is not None and fp_buffer_dir is not None:
-                            _write_fp_buffer(fp_buffer, fp_buffer_dir, prefix="stop_fp")
-                        state.satellite.stop()
+                            _write_fp_buffer(
+                                fp_buffer, fp_buffer_dir,
+                                prefix="stop_fp" if armed else "stop_heard",
+                            )
+                        if armed:
+                            _LOGGER.debug("Stop word detected")
+                            state.satellite.stop()
                 except Exception:  # pylint: disable=broad-except
                     _LOGGER.exception("Unexpected error handling audio")
     except Exception:  # pylint: disable=broad-except

@@ -73,8 +73,15 @@ class MediaPlayerEntity(ESPHomeEntity):
         announce_player: MpvMediaPlayer,
         initial_volume: float = 1.0,
         on_volume_changed: Optional[Callable[[float], None]] = None,
+        external_volume: bool = False,
     ) -> None:
         ESPHomeEntity.__init__(self, server)
+
+        # With external volume the level belongs to the system mixer, which a
+        # peripheral applies when it sees the change. Attenuating here as well
+        # would apply the same reduction twice, so the players stay at unity
+        # and the number this entity holds is intent rather than gain.
+        self.external_volume = external_volume
 
         self.key = key
         self.name = name
@@ -179,8 +186,8 @@ class MediaPlayerEntity(ESPHomeEntity):
                     if not self.muted:
                         self.previous_volume = self.volume
                         self.volume = 0
-                        self.music_player.set_volume(0)
-                        self.announce_player.set_volume(0)
+                        self.music_player.set_volume(self._player_percent(0))
+                        self.announce_player.set_volume(self._player_percent(0))
                         self.muted = True
                     yield self._update_state(self.state)
 
@@ -188,8 +195,8 @@ class MediaPlayerEntity(ESPHomeEntity):
                     self._log.debug("Executing UNMUTE")
                     if self.muted:
                         self.volume = self.previous_volume
-                        self.music_player.set_volume(int(self.volume * 100))
-                        self.announce_player.set_volume(int(self.volume * 100))
+                        self.music_player.set_volume(self._player_percent(self.volume))
+                        self.announce_player.set_volume(self._player_percent(self.volume))
                         self.muted = False
                     yield self._update_state(self.state)
 
@@ -248,6 +255,18 @@ class MediaPlayerEntity(ESPHomeEntity):
 
         self._on_volume_changed = callback
 
+    def _player_percent(self, volume: float) -> int:
+        """The level to hand the software players for a given volume.
+
+        Normally that is the volume itself. Under external volume the mixer
+        downstream already carries it, so the players sit at unity — except at
+        zero, where silence still has to come from somewhere.
+        """
+        if self.external_volume:
+            return 0 if volume <= 0.0 else 100
+
+        return int(round(volume * 100))
+
     def _apply_volume(
         self,
         volume: float,
@@ -256,7 +275,7 @@ class MediaPlayerEntity(ESPHomeEntity):
         remember: bool = True,
     ) -> None:
         normalized = max(0.0, min(1.0, float(volume)))
-        volume_percent = int(round(normalized * 100))
+        volume_percent = self._player_percent(normalized)
 
         self.music_player.set_volume(volume_percent)
         self.announce_player.set_volume(volume_percent)

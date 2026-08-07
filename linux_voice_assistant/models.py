@@ -163,6 +163,9 @@ class ServerState:
     muted: bool = False
     connected: bool = False
     volume: float = 1.0
+    # Volume is carried by a mixer outside this process; the players stay at
+    # unity and `volume` is broadcast for a peripheral to apply.
+    external_volume: bool = False
     oww_probability_cutoff: float = 0.7  # Dynamic threshold for OpenWakeWord
     oww_second_probability_cutoff: float = 0.7  # Dynamic threshold for second OpenWakeWord
     oww_stop_probability_cutoff: float = 0.5  # Dynamic threshold for Stop word

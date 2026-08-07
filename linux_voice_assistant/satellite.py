@@ -117,6 +117,7 @@ class VoiceSatelliteProtocol(APIServer):
                 music_player=state.music_player,
                 announce_player=state.tts_player,
                 initial_volume=state.volume,
+                external_volume=state.external_volume,
             )
             self.state.entities.append(self.state.media_player_entity)
         elif self.state.media_player_entity not in self.state.entities:

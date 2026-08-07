@@ -209,6 +209,17 @@ async def main() -> None:
         help="Volume change per button press, 0.0–1.0 (default: %(default)s)",
     )
     parser.add_argument(
+        "--external-volume",
+        action="store_true",
+        help=(
+            "Do not attenuate playback in software. The volume becomes a number "
+            "reported over the peripheral API for a client to apply to the system "
+            "mixer, so the mixer and this device show one shared level. Only "
+            "useful with such a client connected — without one, nothing changes "
+            "the volume."
+        ),
+    )
+    parser.add_argument(
         "--disable-peripheral-api",
         action="store_true",
         help="Disable the peripheral WebSocket API entirely",
@@ -458,6 +469,7 @@ async def main() -> None:
         output_only=args.output_only,
         download_dir=args.download_dir,
         volume=initial_volume,
+        external_volume=args.external_volume,
         mic_volume=preferences.mic_volume,
         mic_auto_gain=preferences.mic_auto_gain,
         mic_noise_suppression=preferences.mic_noise_suppression,
@@ -479,7 +491,10 @@ async def main() -> None:
     if args.enable_thinking_sound or args.mic_auto_gain or args.mic_noise_suppression:
         state.save_preferences()
 
-    initial_volume_percent = int(round(initial_volume * 100))
+    # Under external volume the system mixer holds the level and a peripheral
+    # applies it on connect, so starting the players anywhere but unity would
+    # attenuate a second time.
+    initial_volume_percent = 100 if args.external_volume else int(round(initial_volume * 100))
     state.music_player.set_volume(initial_volume_percent)
     state.tts_player.set_volume(initial_volume_percent)
 
